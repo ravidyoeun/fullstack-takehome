@@ -125,7 +125,7 @@ const TableContent = memo(({ searchValue, onViewUser, onHoverPosts, onLeavePosts
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto" onMouseLeave={onLeavePosts}>
         <table className="min-w-full border-collapse text-sm">
             <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
               {table.getHeaderGroups().map(headerGroup => (
@@ -230,6 +230,12 @@ export const Table = () => {
     if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`
     return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
   }
+
+  useEffect(() => {
+    const clearHover = () => setHoverPosts(null)
+    window.addEventListener('mousedown', clearHover)
+    return () => window.removeEventListener('mousedown', clearHover)
+  }, [])
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
