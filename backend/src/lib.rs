@@ -27,19 +27,59 @@ pub fn filter_builder_derive(input: TokenStream) -> TokenStream {
             quote! {
                 if let Some(ref filter) = self.#field_name {
                     if let Some(value) = filter.equals {
-                        conditions.push(format!("{} = {}", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" = ");
+                        qb.push_bind(value);
                     }
                     if let Some(value) = filter.gt {
-                        conditions.push(format!("{} > {}", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" > ");
+                        qb.push_bind(value);
                     }
                     if let Some(value) = filter.lt {
-                        conditions.push(format!("{} < {}", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" < ");
+                        qb.push_bind(value);
                     }
                     if let Some(value) = filter.gte {
-                        conditions.push(format!("{} >= {}", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" >= ");
+                        qb.push_bind(value);
                     }
                     if let Some(value) = filter.lte {
-                        conditions.push(format!("{} <= {}", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" <= ");
+                        qb.push_bind(value);
                     }
                 }
             }
@@ -47,16 +87,51 @@ pub fn filter_builder_derive(input: TokenStream) -> TokenStream {
             quote! {
                 if let Some(ref filter) = self.#field_name {
                     if let Some(ref value) = filter.equals {
-                        conditions.push(format!("{} = '{}'", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" = ");
+                        qb.push_bind(value);
                     }
                     if let Some(ref value) = filter.contains {
-                        conditions.push(format!("{} LIKE '%{}%'", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" ILIKE ");
+                        let pattern = format!("%{}%", value);
+                        qb.push_bind(pattern);
                     }
                     if let Some(ref value) = filter.starts_with {
-                        conditions.push(format!("{} LIKE '{}%'", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" ILIKE ");
+                        let pattern = format!("{}%", value);
+                        qb.push_bind(pattern);
                     }
                     if let Some(ref value) = filter.ends_with {
-                        conditions.push(format!("{} LIKE '%{}'", #field_name_str, value));
+                        if is_first {
+                            qb.push(" WHERE ");
+                            is_first = false;
+                        } else {
+                            qb.push(" AND ");
+                        }
+                        qb.push(#field_name_str);
+                        qb.push(" ILIKE ");
+                        let pattern = format!("%{}", value);
+                        qb.push_bind(pattern);
                     }
                 }
             }
@@ -68,15 +143,10 @@ pub fn filter_builder_derive(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl #struct_name {
-            pub fn build_where_clause(&self) -> String {
-                let mut conditions = Vec::new();
+            pub fn apply_to_query<'q>(&'q self, qb: &mut sqlx::QueryBuilder<'q, sqlx::Postgres>) -> bool {
+                let mut is_first = true;
                 #(#field_conditions)*
-
-                if conditions.is_empty() {
-                    "".to_string()
-                } else {
-                    format!(" WHERE {}", conditions.join(" AND "))
-                }
+                !is_first
             }
         }
     };

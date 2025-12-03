@@ -1,7 +1,7 @@
 use async_graphql::{Context, InputObject, Object, Result};
 use backend::FilterBuilder;
 use sqlx::{
-    FromRow, PgPool,
+    FromRow, PgPool, QueryBuilder,
     types::chrono::{DateTime, Utc},
 };
 
@@ -18,6 +18,7 @@ struct User {
 
 
 #[derive(InputObject)]
+#[graphql(rename_fields = "camelCase")]
 struct IntFilter {
     equals: Option<i32>,
     gt: Option<i32>,
@@ -27,6 +28,7 @@ struct IntFilter {
 }
 
 #[derive(InputObject)]
+#[graphql(rename_fields = "camelCase")]
 struct StringFilter {
     equals: Option<String>,
     contains: Option<String>,
@@ -34,20 +36,25 @@ struct StringFilter {
     ends_with: Option<String>,
 }
 
-#[derive(InputObject, FilterBuilder)]
+#[derive(InputObject, FilterBuilder, Default)]
+#[graphql(rename_fields = "camelCase")]
 struct UserFilters {
     id: Option<IntFilter>,
     name: Option<StringFilter>,
     age: Option<IntFilter>,
     email: Option<StringFilter>,
     phone: Option<StringFilter>,
+    // Free-text search handled in resolver to OR across multiple fields
+    search: Option<String>,
 }
 
-#[derive(InputObject, FilterBuilder)]
+#[derive(InputObject, FilterBuilder, Default)]
+#[graphql(rename_fields = "camelCase")]
 struct PostFilters {
     id: Option<IntFilter>,
     user_id: Option<IntFilter>,
     title: Option<StringFilter>,
+    content: Option<StringFilter>,
 }
 
 #[derive(FromRow)]
@@ -55,12 +62,13 @@ struct Post {
     id: i32,
     user_id: Option<i32>,
     title: Option<String>,
+    content: Option<String>,
     created_at: Option<DateTime<Utc>>,
     updated_at: Option<DateTime<Utc>>,
 }
 
 // This is your resolver for the User model
-#[Object]
+#[Object(rename_fields = "camelCase")]
 impl User {
     async fn id(&self) -> i32 {
         self.id
@@ -100,7 +108,7 @@ impl User {
     }
 }
 // This is your resolver for the Post model
-#[Object]
+#[Object(rename_fields = "camelCase")]
 impl Post {
     async fn id(&self) -> i32 {
         self.id
@@ -112,6 +120,10 @@ impl Post {
 
     async fn title(&self) -> &Option<String> {
         &self.title
+    }
+
+    async fn content(&self) -> &Option<String> {
+        &self.content
     }
 
     async fn created_at(&self) -> &Option<DateTime<Utc>> {
@@ -139,21 +151,156 @@ impl Post {
 #[derive(Default)]
 pub struct Query;
 
+#[derive(Default)]
+pub struct Mutation;
+
+#[derive(InputObject)]
+#[graphql(rename_fields = "camelCase")]
+struct UpdateUserInput {
+    id: i32,
+    name: Option<String>,
+    age: Option<i32>,
+    email: Option<String>,
+    phone: Option<String>,
+}
+
+#[derive(InputObject)]
+#[graphql(rename_fields = "camelCase")]
+struct CreateUserInput {
+    name: String,
+    age: i32,
+    email: String,
+    phone: Option<String>,
+}
+
+#[derive(InputObject)]
+#[graphql(rename_fields = "camelCase")]
+struct CreatePostInput {
+    user_id: i32,
+    title: String,
+    content: Option<String>,
+}
+
 #[Object]
 impl Query {
-    async fn users(&self, ctx: &Context<'_>, filters: UserFilters) -> Result<Vec<User>> {
-        let _pool = ctx.data::<PgPool>()?;
-        let where_clause = filters.build_where_clause();
-        let query = format!("SELECT * FROM users{}", where_clause);
-        let users = sqlx::query_as::<_, User>(&query).fetch_all(_pool).await?;
+    async fn users(&self, ctx: &Context<'_>, filters: Option<UserFilters>) -> Result<Vec<User>> {
+        let pool = ctx.data::<PgPool>()?;
+        let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new("SELECT * FROM users");
+        let filters = filters.unwrap_or_default();
+        let search = filters.search.clone();
+        let mut has_condition = filters.apply_to_query(&mut qb);
+
+        if let Some(term) = search {
+            let pattern = format!("%{}%", term);
+            if has_condition {
+                qb.push(" AND (");
+            } else {
+                qb.push(" WHERE (");
+            }
+            qb.push("name ILIKE ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR email ILIKE ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR phone ILIKE ");
+            qb.push_bind(pattern);
+            if let Ok(numeric) = term.parse::<i32>() {
+                qb.push(" OR id = ");
+                qb.push_bind(numeric);
+                qb.push(" OR age = ");
+                qb.push_bind(numeric);
+            }
+            qb.push(")");
+        }
+
+        let users = qb.build_query_as::<User>().fetch_all(pool).await?;
         Ok(users)
     }
 
-    async fn posts(&self, ctx: &Context<'_>, filters: PostFilters) -> Result<Vec<Post>> {
-        let _pool = ctx.data::<PgPool>()?;
-        let where_clause = filters.build_where_clause();
-        let query = format!("SELECT * FROM posts{}", where_clause);
-        let posts = sqlx::query_as::<_, Post>(&query).fetch_all(_pool).await?;
+    async fn posts(&self, ctx: &Context<'_>, filters: Option<PostFilters>) -> Result<Vec<Post>> {
+        let pool = ctx.data::<PgPool>()?;
+        let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new("SELECT * FROM posts");
+        let filters = filters.unwrap_or_default();
+        filters.apply_to_query(&mut qb);
+        let posts = qb.build_query_as::<Post>().fetch_all(pool).await?;
         Ok(posts)
+    }
+}
+
+#[Object(rename_fields = "camelCase")]
+impl Mutation {
+    async fn create_user(&self, ctx: &Context<'_>, input: CreateUserInput) -> Result<User> {
+        let pool = ctx.data::<PgPool>()?;
+        let user = sqlx::query_as::<_, User>(
+            "INSERT INTO users (name, age, email, phone) VALUES ($1, $2, $3, $4) RETURNING *",
+        )
+        .bind(input.name)
+        .bind(input.age)
+        .bind(input.email)
+        .bind(input.phone)
+        .fetch_one(pool)
+        .await?;
+        Ok(user)
+    }
+
+    async fn create_post(&self, ctx: &Context<'_>, input: CreatePostInput) -> Result<Post> {
+        let pool = ctx.data::<PgPool>()?;
+        let post = sqlx::query_as::<_, Post>(
+            "INSERT INTO posts (user_id, title, content) VALUES ($1, $2, $3) RETURNING *",
+        )
+        .bind(input.user_id)
+        .bind(input.title)
+        .bind(input.content)
+        .fetch_one(pool)
+        .await?;
+        Ok(post)
+    }
+
+    async fn update_user(&self, ctx: &Context<'_>, input: UpdateUserInput) -> Result<User> {
+        let pool = ctx.data::<PgPool>()?;
+
+        let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new("UPDATE users SET ");
+        let mut has_updates = false;
+        let mut first = true;
+
+        if let Some(name) = input.name {
+            if !first { qb.push(", "); }
+            first = false;
+            qb.push("name = ");
+            qb.push_bind(name);
+            has_updates = true;
+        }
+        if let Some(age) = input.age {
+            if !first { qb.push(", "); }
+            first = false;
+            qb.push("age = ");
+            qb.push_bind(age);
+            has_updates = true;
+        }
+        if let Some(email) = input.email {
+            if !first { qb.push(", "); }
+            first = false;
+            qb.push("email = ");
+            qb.push_bind(email);
+            has_updates = true;
+        }
+        if let Some(phone) = input.phone {
+            if !first { qb.push(", "); }
+            first = false;
+            qb.push("phone = ");
+            qb.push_bind(phone);
+            has_updates = true;
+        }
+
+        // No fields to update is a client error
+        if !has_updates {
+            return Err(async_graphql::Error::new("No fields provided to update"));
+        }
+
+        qb.push(", updated_at = CURRENT_TIMESTAMP WHERE id = ");
+        qb.push_bind(input.id);
+        qb.push(" RETURNING *");
+
+        let user = qb.build_query_as::<User>().fetch_one(pool).await?;
+        Ok(user)
     }
 }
