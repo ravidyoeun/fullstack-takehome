@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   createColumnHelper,
   flexRender,
@@ -24,24 +24,71 @@ import { TableFilters } from './TableFilters'
 import { GenericCell } from './cells/GenericCell'
 import { LoadingSpinner } from '../LoadingSpinner'
 
+type OrderDirectionType = 'ASC' | 'DESC' | null
+type OrderState = { id: OrderDirectionType; name: OrderDirectionType }
+
 type TableContentProps = {
   searchValue: string
   onViewUser: (userId: number) => void
   onHoverPosts: (posts: GetUsersQuery['users'][0]['posts'], pos: { x: number; y: number }) => void
   onLeavePosts: () => void
+  orderBy: OrderState
+  onSortChange: Dispatch<SetStateAction<OrderState>>
 }
 
-const TableContent = memo(({ searchValue, onViewUser, onHoverPosts, onLeavePosts }: TableContentProps) => {
+const TableContent = memo(({ searchValue, onViewUser, onHoverPosts, onLeavePosts, orderBy, onSortChange }: TableContentProps) => {
   const columnHelper = createColumnHelper<GetUsersQuery['users'][0]>()
+
+  const renderSortIcon = (dir: OrderDirectionType) => {
+    if (dir === 'ASC') {
+      return <span className="text-blue-700">▲</span>
+    }
+    if (dir === 'DESC') {
+      return <span className="text-blue-700">▼</span>
+    }
+    return (
+      <span className="text-gray-300">
+        ▲▼
+      </span>
+    )
+  }
 
   const columns = useMemo(
     () => [
       columnHelper.accessor('id', {
-        header: 'ID',
+        header: () => (
+          <button
+            className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 hover:text-blue-700"
+            onClick={() =>
+              onSortChange(prev => ({
+                ...prev,
+                id: prev.id === 'ASC' ? 'DESC' : 'ASC',
+                name: null,
+              }))
+            }
+          >
+            ID
+            {renderSortIcon(orderBy.id)}
+          </button>
+        ),
         cell: info => <GenericCell value={info.getValue()} />,
       }),
       columnHelper.accessor('name', {
-        header: 'Name',
+        header: () => (
+          <button
+            className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 hover:text-blue-700"
+            onClick={() =>
+              onSortChange(prev => ({
+                ...prev,
+                name: prev.name === 'ASC' ? 'DESC' : 'ASC',
+                id: null,
+              }))
+            }
+          >
+            Name
+            {renderSortIcon(orderBy.name)}
+          </button>
+        ),
         cell: info => <GenericCell value={info.getValue()} />,
       }),
       columnHelper.accessor('age', {
@@ -91,7 +138,7 @@ const TableContent = memo(({ searchValue, onViewUser, onHoverPosts, onLeavePosts
         ),
       }),
     ],
-    [columnHelper, onHoverPosts, onLeavePosts, onViewUser]
+    [columnHelper, onHoverPosts, onLeavePosts, onViewUser, orderBy.id, orderBy.name, onSortChange]
   )
 
   const trimmedSearch = searchValue.trim()
@@ -103,6 +150,7 @@ const TableContent = memo(({ searchValue, onViewUser, onHoverPosts, onLeavePosts
   const { data: usersData, loading, error } = useQuery(GetUsersDocument, {
     variables: {
       filters,
+      orderBy,
     },
   })
   
@@ -191,6 +239,7 @@ export const Table = () => {
     phone: '',
     age: '',
   })
+  const [orderBy, setOrderBy] = useState<OrderState>({ id: null, name: null })
   const [getUserWithPosts, { data: userDetail, loading: detailLoading, error: detailError }] =
     useLazyQuery<GetUserWithPostsQuery>(GetUserWithPostsDocument)
   const [updateUser, { loading: updateLoading }] = useMutation<UpdateUserMutation>(UpdateUserDocument, {
@@ -266,6 +315,8 @@ export const Table = () => {
         onViewUser={handleViewUser}
         onHoverPosts={(posts, pos) => setHoverPosts({ posts, ...pos })}
         onLeavePosts={() => setHoverPosts(null)}
+        orderBy={orderBy}
+        onSortChange={setOrderBy}
       />
 
       {hoverPosts && (

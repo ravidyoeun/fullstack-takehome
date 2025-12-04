@@ -14,6 +14,7 @@ const config: CodegenConfig = {
           reactApolloVersion: 4,
           noNamespaces: true,
           importOperationTypesFrom: "Operations",
+          enumsAsTypes: true,
         },
       }
     },

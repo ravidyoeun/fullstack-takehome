@@ -1,4 +1,4 @@
-use async_graphql::{Context, InputObject, Object, Result};
+use async_graphql::{Context, Enum, InputObject, Object, Result};
 use backend::FilterBuilder;
 use sqlx::{
     FromRow, PgPool, QueryBuilder,
@@ -55,6 +55,19 @@ struct PostFilters {
     user_id: Option<IntFilter>,
     title: Option<StringFilter>,
     content: Option<StringFilter>,
+}
+
+#[derive(InputObject, Default)]
+#[graphql(rename_fields = "camelCase")]
+struct UserOrderBy {
+    id: Option<OrderDirection>,
+    name: Option<OrderDirection>,
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+enum OrderDirection {
+    Asc,
+    Desc,
 }
 
 #[derive(FromRow)]
@@ -183,7 +196,7 @@ struct CreatePostInput {
 
 #[Object]
 impl Query {
-    async fn users(&self, ctx: &Context<'_>, filters: Option<UserFilters>) -> Result<Vec<User>> {
+    async fn users(&self, ctx: &Context<'_>, filters: Option<UserFilters>, order_by: Option<UserOrderBy>) -> Result<Vec<User>> {
         let pool = ctx.data::<PgPool>()?;
         let mut qb: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new("SELECT * FROM users");
         let filters = filters.unwrap_or_default();
@@ -210,6 +223,25 @@ impl Query {
                 qb.push_bind(numeric);
             }
             qb.push(")");
+        }
+
+        if let Some(order) = order_by {
+            let mut added = false;
+            if order.id.is_some() || order.name.is_some() {
+                qb.push(" ORDER BY ");
+                if let Some(dir) = order.id {
+                    qb.push("id ");
+                    qb.push(match dir { OrderDirection::Asc => "ASC", OrderDirection::Desc => "DESC" });
+                    added = true;
+                }
+                if let Some(dir) = order.name {
+                    if added {
+                        qb.push(", ");
+                    }
+                    qb.push("name ");
+                    qb.push(match dir { OrderDirection::Asc => "ASC", OrderDirection::Desc => "DESC" });
+                }
+            }
         }
 
         let users = qb.build_query_as::<User>().fetch_all(pool).await?;
